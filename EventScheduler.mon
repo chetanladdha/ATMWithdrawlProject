@@ -1,0 +1,31 @@
+/**
+ * $Copyright (c) 2016 Software AG, Darmstadt, Germany and/or Software AG USA Inc., Reston, VA, USA, and/or its subsidiaries and/or its affiliates and/or their licensors.$
+ * Use, reproduction, transfer, publication or disclosure is prohibited except as specifically provided for in your License Agreement with Software AG
+ */
+
+package com.apama.eventscheduler;
+
+/**
+ * An event object providing function to schedule sending of an event to a channel 
+ * in future. It is useful for externally-clocked correlator where correlator time 
+ * travels differently than real time and timer based on real time is required. 
+ * The "on wait()" listener is the standard way for creating a timer and should
+ * be used in most cases.
+ */
+event EventScheduler {
+	/** @private */
+	import "EventSchedulerPlugin" as _plugin;
+
+	/** Schedule an event to be sent in future after the specified time. The event is
+	 * sent to the specified channel.
+	 *
+	 * @param eventString String that specifies the event to be sent.
+	 * @param channel String that specifies the channel to be which event should be sent.
+	 * @param duration Float that specifies time duration after which event should be sent. 
+	 * The duration is specified in seconds.
+	 *
+	 */
+	static action scheduleEvent(string eventString, string channel, float duration) {
+		_plugin.scheduleEvent(eventString, channel, duration);
+	}
+}

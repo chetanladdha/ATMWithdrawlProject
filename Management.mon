@@ -1,0 +1,587 @@
+/*
+	$Copyright(c) 2011-2013 Progress Software Corporation (PSC). All rights reserved.$ 
+	$Copyright (c) 2013-2016 Software AG, Darmstadt, Germany and/or Software AG USA Inc., Reston, VA, USA, and/or its subsidiaries and/or its affiliates and/or their licensors.$ 
+	Use, reproduction, transfer, publication or disclosure is prohibited except as specifically provided for in your License Agreement with Software AG 
+	
+	Requires ManagementImpl.mon
+*/
+
+package com.apama.correlator;
+
+/**
+ * EPL representation of the correlator status.
+ */
+event EngineStatus {
+	/** 
+	* @private
+	*
+	* Identifer prepended to user status keys to differentiate from standard keys.
+	*/
+	constant string userPrefix := "user-";
+
+	/** @private*/
+	dictionary<string,string> values;
+
+	/**
+	 * Get the time in ms that the Engine has been running for.
+	 *
+	 * @return The uptime of the Engine.
+	 */
+	action getUptime() returns integer {
+		return values["uptime"].toInteger();
+	}
+
+	/**
+	 * Get the number of contexts active in the Engine.
+	 *
+	 * @return The number of contexts active.
+	 */
+	action getNumContexts() returns integer {
+		return values["numContexts"].toInteger();
+	}
+
+	/**
+	 * Get the number of monitors defined in the Engine.
+	 *
+	 * @return The number of monitors defined.
+	 */
+	action getNumMonitors() returns integer {
+		return values["numMonitors"].toInteger();
+	}
+	
+	/**
+	 * Get the number of monitor processes or active
+	 * sub-monitors. If a monitor spawns it creates a new
+	 * process.
+	 *
+	 * @return The number of monitor processes.
+	 */
+	action getNumProcesses() returns integer {
+		return values["numProcesses"].toInteger();
+	}
+	
+	/**
+	 * Get the number of Java (JMon) Applications defined in the Engine.
+	 *
+	 * @return The number of Java Applications.
+	 */
+	action getNumJavaApplications() returns integer {
+		return values["numJavaApplications"].toInteger();
+	}
+	
+	/**
+	 * Get the number of active listeners.
+	 *
+	 * @return The number of active listeners.
+	 */
+	action getNumListeners() returns integer {
+		return values["numListeners"].toInteger();
+	}
+	
+	/**
+	 * Get the number of event types defined.
+	 *
+	 * @return The number of event types.
+	 */
+	action getNumEventTypes() returns integer {
+		return values["numEventTypes"].toInteger();
+	}
+	
+	/**
+	 * Get the total number of events waiting on the route queues (value of
+	 * 'rq' in the correlator status line).
+	 *
+	 * @return The number of waiting events.
+	 */
+	action getNumQueuedFastTrack() returns integer {
+		return values["numQueuedFastTrack"].toInteger();
+	}
+	
+	/**
+	 * Get the total number of events waiting on the input queues (value of
+	 * 'iq' in the correlator status line).
+	 *
+	 * @return The number of waiting events.
+	 */
+	action getNumQueuedInput() returns integer {
+		return values["numQueuedInput"].toInteger();
+	}
+	
+	/**
+	 * Get the number of events received since the Engine started.
+	 *
+	 * @return The number of events received.
+	 */
+	action getNumReceived() returns integer {
+		return values["numReceived"].toInteger();
+	}
+	
+	/**
+	 * Get the number of events received on the internal input
+	 * queue since the Engine started.
+	 *
+	 * @return The number of events received.
+	 */
+	action getNumFastTracked() returns integer {
+		return values["numFastTracked"].toInteger();
+	}
+	
+	/**
+	 * Get the number of event consumers connected to the
+	 * engine.
+	 *
+	 * @return The number of event consumers.
+	 */
+	action getNumConsumers() returns integer {
+		return values["numConsumers"].toInteger();
+	}
+	
+	/**
+	 * Get the number of events waiting on the output queue.
+	 *
+	 * @return The number of events waiting.
+	 */
+	action getNumOutEventsQueued() returns integer {
+		return values["numOutEventsQueued"].toInteger();
+	}
+
+	/**
+	 * Gets the number of output events which have been
+	 * put onto the output queue. This corresponds to the
+	 * number of MonitorScript emit commands executed.
+	 *
+	 * @return The number of events emitted.
+	 */
+	action getNumOutEventsCreated() returns integer {
+		return values["numEmits"].toInteger();
+	}
+	
+	/**
+	 * This is the number of output events sent out by the
+	 * correlator process. This differs from getNumOutEventsCreated
+	 * since events can be of interest to a varying number of
+	 * consumers, and can be dropped by the output queue.
+	 *
+	 * @return The number of events sent.
+	 */
+	action getNumOutEventsSent() returns integer {
+		return values["numOutEventsSent"].toInteger();
+	}
+	
+	/**
+	 * Get the queue size of the most backed up context.
+	 *
+	 * @return The number of events queued.
+	 */
+	action getMostBackedUpQueueSize() returns integer {
+		return values["mostBackedUpICQueueSize"].toInteger();
+	}
+	
+	/**
+	 * Get the number of active sub-listeners.
+	 *
+	 * @return The number of sub-listeners.
+	 */
+	action getNumSubListeners() returns integer {
+		return values["numSubListeners"].toInteger();
+	}
+	
+	/**
+	 * Get the number of events taken off the input queue and processed 
+	 * since the Engine started.
+	 *
+	 * @return The number of events processed.
+	 */
+	action getNumProcessed() returns integer {
+		return values["numProcessed"].toInteger();
+	}
+
+	/**
+	 * Get the name of the most backed up context.
+	 *
+	 * @return Name of the slowest context.
+	 */
+	action getMostBackedUpInput() returns string {
+		return values["mostBackedUpInputContext"];
+	}
+
+	/**
+	 * Get the name of the slowest receiver.
+	 *
+	 * @return The slowest receiver.
+	 */
+	action getSlowestReceiver() returns string {
+		return values["slowestReceiver"];
+	}
+
+	/**
+	 * Get the queue size of the slowest receiver.
+	 *
+	 * @return The queue size of the slowest receiver.
+	 */
+	action getSlowestReceiverQueueSize() returns integer {
+		return values["slowestReceiverQueueSize"].toInteger();
+	}
+
+	/** @private */
+	action prep(string input) returns string {
+		return userPrefix + input;
+	}
+
+	/**
+	 * Get a user-set status value of type float OR the alternative value specified if the key does not exist.
+	 *
+	 * @param key The name of the value to get.
+	 * @param alt The alternative value to return if the key does not exist.
+	 * @return The user status of type float or the alternate value if the key does not exist.
+	 */
+	action getUserFloatOr(string key, float alt) returns float {
+		key := prep(key);
+		if(values.hasKey(key)) {
+			return float.parse(values[key]);
+		} else {
+			return alt;
+		}
+	}
+
+	/**
+	 * Get a user-set status value of type integer OR the alternative value specified if the key does not exist.
+	 *
+	 * @param key The name of the value to get.
+	 * @param alt The alternative value to return if the key does not exist.
+	 * @return The user status of type integer or the alternate value if the key does not exist.
+	 */
+	action getUserIntegerOr(string key, integer alt) returns integer {
+		key := prep(key);
+		if(values.hasKey(key)) {
+			return integer.parse(values[key]);
+		} else {
+			return alt;
+		}
+	}
+
+	/**
+	 * Get a user-set status value of type boolean OR the alternative value specified if the key does not exist.
+	 *
+	 * @param key The name of the value to get.
+	 * @param alt The alternative value to return if the key does not exist.
+	 * @return The user status of type boolean or the alternate value if the key does not exist.
+	 */
+	action getUserBooleanOr(string key, boolean alt) returns boolean {
+		key := prep(key);
+		if(values.hasKey(key)) {
+			return boolean.parse(values[key]);
+		} else {
+			return alt;
+		}
+	}
+
+	/**
+	 * Get a user-set status value of type string OR the alternative value specified if the key does not exist.
+	 *
+	 * @param key The name of the value to get.
+	 * @param alt The alternative value to return if the key does not exist.
+	 * @return The user status of type string or the alternate value if the key does not exist.
+	 */
+	action getUserStringOr(string key, string alt) returns string {
+		key := prep(key);
+		if(values.hasKey(key)) {
+			return values[key];
+		} else {
+			return alt;
+		}
+	}
+
+	/**
+	 * Get a user-set status value of type float.
+	 *
+	 * @param key The name of the value to get.
+	 * @return The user status of type float.
+	 */
+	action getUserFloat(string key) returns float {
+		return float.parse(values[prep(key)]);
+	}
+
+	/**
+	 * Get a user-set status value of type integer.
+	 *
+	 * @param key The name of the value to get.
+	 * @return The user status of type integer.
+	 */
+	action getUserInteger(string key) returns integer {
+		return integer.parse(values[prep(key)]);
+	}
+
+	/**
+	 * Get a user-set status value of type boolean.
+	 *
+	 * @param key The name of the value to get.
+	 * @return The user status of type boolean.
+	 */
+	action getUserBoolean(string key) returns boolean {
+		return boolean.parse(values[prep(key)]);
+	}
+
+	/**
+	 * Get a user-set status value of type string.
+	 *
+	 * @param key The name of the value to get.
+	 * @return The user status of type string.
+	 */
+	action getUserString(string key) returns string {
+		return values[prep(key)];
+	}
+
+	/** Get the full correlator status value dictionary .
+	 *
+	 * @return The full correlator status value dictionary.
+	 */
+	action getValues() returns dictionary<string,string> {
+		return values;
+	}
+}
+
+
+/**
+ * EPL interface to the persistence functionality of the correlator.
+ */
+event Persistence {
+	/**
+	 * Asynchronously request a Correlator state persistence operation.
+	 *
+	 * At some point after this action is called, the correlator will commit its persistent state to storage. Once the commit has completed
+	 * successfully, the provided callback will be invoked.
+	 */
+	static action persist(action<> callback) {
+		integer uid := integer.getUnique();
+		management.asyncRequestSeq("doPersistNow", new sequence<string>, uid);
+		on ManagementAck(uid = uid) {
+			callback();
+		}
+	}
+
+	/** @private*/
+	import "ManagementPlugin" as management;
+}
+
+/**
+ * EPL interface to the generic component management functionality of the correlator.
+ */
+event Component {
+
+	/**
+	 * Argument for attach/detachAsEventConsumer - use legacy mode.
+	 * In this mode, all events are delivered in serial to the receiver on the default channel.
+	 */
+	constant integer CONNECT_LEGACY := 0;
+	/**
+	 * Argument for attach/detachAsEventConsumer - use parallel mode.
+	 * In this mode, all events are delivered in parallel per channel.
+	 */
+	constant integer CONNECT_PARALLEL := 1;
+
+	/** @private*/
+	import "ManagementPlugin" as management;
+	/**
+	 * Get the hostname of the server the correlator is running on.
+ 	 */
+	static action getHostname() returns string {
+		return management.getHostname();
+	}
+	/**
+	 * Get the component name of the correlator.
+	 */
+	static action getComponentName() returns string {
+		return management.getComponentName();
+	}
+	/**
+	 * Get the port the correlator is running on.  This is the
+	 * main port number; extra ports specified via the config file
+	 * are not accessible.
+	 */
+	static action getComponentPort() returns integer {
+		return management.getComponentPort();
+	}
+	/** 
+	 * Get the correlator's logical ID.  This is a unique ID assigned to every correlator process at startup.
+	 */
+	static action getComponentLogicalId() returns string {
+		return management.getComponentLogicalId();
+	}
+	/** 
+	 * Get the correlator's physical ID.  This is a unique ID generated for a component.
+	 */
+	static action getComponentPhysicalId() returns string {
+		return management.getComponentPhysicalId();
+	}
+	/**
+	 * Get the number of CPUs the correlator has available to it.
+	 */
+	static action getNumberCPUs() returns integer {
+		return management.getNumberCPUs();
+	}
+	/**
+	 * Get whether or not correlator is running with external clocking on.
+	 */
+	static action isExternallyClocked() returns boolean {
+		return management.isExternallyClocked();
+	}
+
+	/** Get the current license mode of the correlator - either "nolicensefile" or "licensefilesupplied". */
+	static action getLicenseMode() returns string {
+		return management.getLicenseMode();
+	}
+
+	/**
+	* Get the correlator status, internal values and user added stats.
+	*
+	* @return EngineStatus a representation of all status values 
+	* including user added values.
+	*/
+	static action getStatus() returns EngineStatus {
+		dictionary<string, string> statusString := management.getStatus();
+		return EngineStatus(statusString);
+	}
+
+	/**
+	* Set a specific value on a user added status, If the status
+	* doesn't already exist this will add it.
+	*
+	* Note the value must be in string format.
+	*
+	* @param name The name of the user status to add.
+	* @param value The value associated with the user Status value.
+	*/
+	static action setUserStatus(string name, string value) {
+		management.setUserStatus(name, value);
+	}
+
+	/**
+	* Delete a specific user added status.
+	*
+	* @param name The name of the user status value to delete.
+	*/
+	static action deleteUserStatus(string name) {
+		management.deleteUserStatus(name);
+	}
+
+	/** @private*/
+	static action _escapeChannel(string c) returns string {
+		if c.find(" ")=-1 and c.find("\n")=-1 and c.find("\\")=-1 {
+			return c;
+		}
+		return c.replaceAll("\\", "\\\\").replaceAll(" ", "\\x20").replaceAll("\n","\\n");
+	}
+
+
+	/**
+	 * Connect to another Apama component to receive events on the specified channels.
+	 * connectMode should be one of CONNECT_LEGACY or CONNECT_PARALLEL.
+	 */
+	static action attachAsEventConsumerTo(string host, integer port, sequence<string> channels, boolean disconnectSlow, integer connectMode) {
+		string channel;
+		string parallel:="";
+		if connectMode = CONNECT_PARALLEL {
+			parallel := "parallel ";
+		}
+		string disconnectSlowStr := "";
+		if disconnectSlow {
+			disconnectSlowStr := "disconnectSlow ";
+		}
+		for channel in channels {
+			management.asyncRequestSeq("addReceiveConnection",
+			                           [host + " "+disconnectSlowStr + parallel + port.toString() + " " + _escapeChannel(channel)], -1);
+		}
+	}
+	/**
+	 * Disconnect from another Apama component to receive events on the specified channels.
+	 * connectMode should be one of CONNECT_LEGACY or CONNECT_PARALLEL.
+	 */
+	static action detachAsEventConsumerFrom(string host, integer port, sequence<string> channels, integer connectMode) {
+		string channel;
+		string parallel:="";
+		if connectMode = CONNECT_PARALLEL {
+			parallel := "parallel ";
+		}
+		for channel in channels {
+			management.asyncRequestSeq("removeReceiveConnection", 
+			                           [host + " "+ parallel + port.toString() + " " + _escapeChannel(channel)], -1);
+		}
+	}
+}
+
+/**
+ * EPL interface to correlator logging functionality. All methods on this interface are identical to the equivalent engine_management
+ * requests, which are described in more detail in the user documentation.
+ */
+event Logging {
+	/** @private*/
+	import "ManagementPlugin" as management;
+
+	/**
+	 * Schedule simultaneous rotation of all correlator logs, including application logs and the input log. The rotation will happen shortly
+	 * after this call.
+	 */
+	static action rotateLogs() {
+		management.asyncRequestSeq("rotateLogs", new sequence<string>, -1);
+	}
+
+	/** Change the file that the correlator logs to. */
+	static action setLogFile(string filename) {
+		string ignore := management.syncRequestSeq("setLogFile", [filename]);
+	}
+
+	/** Set the destination of EPL log messages from the given package. A blank package is the root package. */
+	static action setApplicationLogFile(string pkg, string filename) {
+		if(pkg = "") {
+			string ignore := management.syncRequestSeq("setApplicationLogFile", [filename]);
+		} else {
+			string ignore := management.syncRequestSeq("setApplicationLogFile", [filename, pkg]);
+		}
+	}
+
+	/** Set the log level threshold of EPL log messages from the given package. A blank package is the root package. */
+	static action setApplicationLogLevel(string pkg, string level) {
+		if(pkg = "") {
+			string ignore := management.syncRequestSeq("setApplicationLogLevel", [level]);
+		} else {
+			string ignore := management.syncRequestSeq("setApplicationLogLevel", [level, pkg]);
+		}
+	}
+
+	/** Return the destination file for EPL log messages from the given package. A blank package is the root package. */
+	static action getApplicationLogFile(string pkg) returns string {
+		if(pkg = "") {
+			return management.syncRequestSeq("getApplicationLogFile", new sequence<string>);
+		} else {
+			return management.syncRequestSeq("getApplicationLogFile", [pkg]);
+		}
+	}
+
+	/** Return the log level threshold of EPL log messages from the given package. A blank package is the root package. */
+	static action getApplicationLogLevel(string pkg) returns string {
+		if(pkg = "") {
+			return management.syncRequestSeq("getApplicationLogLevel", new sequence<string>);
+		} else {
+			return management.syncRequestSeq("getApplicationLogLevel", [pkg]);
+		}
+	}
+
+	/** Reset logging for the given package to the default. A blank package is the root package. */
+	static action unsetApplicationLogFile(string pkg) {
+		if(pkg = "") {
+			string ignore := management.syncRequestSeq("unsetApplicationLogFile", new sequence<string>);
+		} else {
+			string ignore := management.syncRequestSeq("unsetApplicationLogFile", [pkg]);
+		}
+	}
+
+	/** Remove the log level from the given package, returning it to default. A blank package is the root package. */
+	static action unsetApplicationLogLevel(string pkg) {
+		if(pkg = "") {
+			string ignore := management.syncRequestSeq("unsetApplicationLogLevel", new sequence<string>);
+		} else {
+			string ignore := management.syncRequestSeq("unsetApplicationLogLevel", [pkg]);
+		}
+	}
+}
