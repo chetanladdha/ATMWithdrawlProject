@@ -1,0 +1,524 @@
+package com.apama.dataview;
+
+/*
+ * $Copyright(c) 2007, 2008 Progress Software Corporation (PSC). All rights reserved.$
+ * $Copyright (c) 2013-2016 Software AG, Darmstadt, Germany and/or Software AG USA Inc., Reston, VA, USA, and/or its subsidiaries and/or its affiliates and/or their licensors.$
+ * Use, reproduction, transfer, publication or disclosure is prohibited except as specifically provided for in your License Agreement with Software AG
+ */
+
+
+/* Apama DataViewService API.
+ *
+ * This service enables MonitorScript or JMon applications to expose a simple 
+ * read-only "DataView" interface. DataViews may be viewed using Apama Dashboard 
+ * Studio in a similar way to Scenarios.
+ *
+ * Several implementations of this interface will exist. 
+ * Each implementation is in a separate file - inject the one you wish to use.
+ *   e.g. DataViewService_Impl_Dict.mon
+ *
+ * Route vs. Emit
+ * The standard implementations of the DataViewService will always ROUTE 
+ * any com.apama.dataview.* events, with the expectation that applications
+ * using the service are co-located in the same correlator as the service.
+ * If your architecture requires the client application to be in a separate 
+ * correlator to the DataView service, then two "emitter" monitors are 
+ * available.
+ * DataViewService_ServiceEmitter.mon  would be injected into the same 
+ * correlator as the DataView service after injecting the DataViewService 
+ * interface but before injecting the implementation.
+ * DataViewService_ApplicationEmitter.mon  would be injected into the same 
+ * correlator as the client application after injecting the DataViewService 
+ * interface but before injecting the client application.
+ * 
+ *
+ * Notes:
+ * 
+ * 1) Every event has an initial field called msgId. Clients may choose to put 
+ *    some identifier in this field when sending messages to the service. Any 
+ *    event routed by the service in response will contain the same identifier.
+ *
+ * 2) Most events contain a field called "dvName". This string 
+ *    uniquely identifies a DataView inside the correlator. 
+ *
+ * 3) Every event has a final field called extraParams that is a string:string
+ *    dictionary. Some implementations may choose to use this field. It provides
+ *    a way of future-proofing the interface to a certain extent.
+ *
+ * $Revision: 279443 $
+ */
+
+
+
+
+
+/* ==========================================================================
+ * ==========================================================================
+ * Events to send to the DataViewService to manage the DataView schemas
+ * ==========================================================================
+ * ========================================================================== */
+
+
+/** Define a new DataView type.
+ *
+ * Expect either a DataViewDefinition or a DataViewException in response.
+ *
+ * @see DataViewDefinition, DataViewException, DataViewAddItem
+ *
+ * Direction: From the application monitor to the DataViewService.
+ */
+event DataViewAddDefinition {
+	/** Optional application-defined message identifier used to correlate 
+		requests and responses. */
+	string msgId;
+	/** The name that uniquely identifies this DataView (e.g. DataView_XXX). */
+	string dvName;
+	/** The display name of the DataView (e.g. "XXX manager"). */
+	string dvDisplayName;
+	/** Optional field containing a description of this DataView 
+		(e.g. "This DataView exposes XXX objects"). */
+	string dvDescription;
+	/** Specifies the names of each field exposed by the DataView. */
+	sequence<string> fieldNames;
+	/** Specifies the types corresponding to each field in the fieldNames sequence. 
+		Supported types are: string, float, integer, boolean, decimal. */
+	sequence<string> fieldTypes;
+	/** Optional set of field names whose values in an Item are to be combined 
+		to make a unique key that can be used instead of the dvItemId field of 
+		DataViewDeleteItem, DataViewUpdateItem, and DataViewUpdateDelta events.
+ 	*/
+	sequence<string> keyFields;
+	
+	/** Optional dictionary of extra information about this definition, 
+		some of which may be available for display in dashboards and clients. 
+		
+		DataView implementation-specific parameters may also be stored here. 
+		
+		To avoid collisions with keys that may be added to the product in 
+		future, all user-defined extraParams should start with a prefix 
+		identifying the application or organisation they were added for. 
+	*/
+	dictionary<string, string> extraParams;
+}
+
+
+/** Remove an existing DataView type.
+ *
+ * Direction: From the customer Monitor to the DataViewService.
+ *
+ * Response: DataViewUnloaded()
+ *
+ * @see DataViewUnloaded
+ */
+event DataViewDeleteDefinition {
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The DataView Name (e.g. conventionally DataView_XXX). */
+	string dvName;
+	/** [OPTIONAL] Some implementations may choose to make use of this field. 
+	
+		To avoid collisions with keys that may be added to the product in 
+		future, all user-defined extraParams should start with a prefix 
+		identifying the application or organisation they were added for. 
+	*/
+	dictionary<string, string> extraParams;
+}
+
+
+/** Request helper dictionary to facilitate sequence position lookup
+ *    by field name.
+ *
+ * @see DataViewFieldLookup
+ *
+ * Direction: From the customer Monitor to the DataViewService.
+ *
+ * Response: DataViewFieldLookup()
+ */
+event DataViewGetFieldLookup {
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The DataView Name (e.g. conventionally DataView_XXX). */
+	string dvName;
+	/** [OPTIONAL] Some implementations may choose to make use of this field.
+	
+		To avoid collisions with keys that may be added to the product in 
+		future, all user-defined extraParams should start with a prefix 
+		identifying the application or organisation they were added for. 
+	 */
+	dictionary<string, string> extraParams;
+}
+
+
+
+/* ==========================================================================
+ * ==========================================================================
+ * Events to send to the DataViewService to manage individual DataView Items
+ * ==========================================================================
+ * ========================================================================== */
+
+
+/** Request that a new Item is added to a specific DataView. Must not already 
+* exist. 
+*
+* @see DataViewItem
+*
+* Direction: From the customer Monitor to the DataViewService.
+*/
+event DataViewAddItem {
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The unique name of the DataView. */
+	string dvName;
+	/** The owner (user) of the Item. */
+	string owner;
+	/** The timestamp of the initial update (seconds since epoch). If the value given is -1.0 then the service will populate it using correlator currentTime. */
+	float timeStamp;
+	/** Complete sequence of field values in string form. */
+	sequence<string> fieldValues;
+	/** [OPTIONAL] Some implementations may choose to make use of this field.
+	
+		To avoid collisions with keys that may be added to the product in 
+		future, all user-defined extraParams should start with a prefix 
+		identifying the application or organisation they were added for. 
+	 */
+	dictionary<string, string> extraParams;
+}
+
+
+/** Request that a new Item is added to a specific DataView if it does not already exist, 
+* or is updated when it does exist. 
+* 
+* This will ONLY work when keyFields are used.
+* Attempts to change the owner of an existing item will be rejected with a DataViewItemException.
+*
+* @see DataViewItem
+*
+* Direction: From the customer Monitor to the DataViewService.
+*/
+event DataViewAddOrUpdateItem {
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The unique name of the DataView. */
+	string dvName;
+	/** The owner (user) of the Item - ONLY used for new items. */
+	string owner;
+	/** The timestamp of the initial update (seconds since epoch). If the value given is -1.0 then the service will populate it using correlator currentTime. */
+	float timeStamp;
+	/** Complete sequence of field values in string form. */
+	sequence<string> fieldValues;
+	/** [OPTIONAL] Some implementations may choose to make use of this field. 
+	
+		To avoid collisions with keys that may be added to the product in 
+		future, all user-defined extraParams should start with a prefix 
+		identifying the application or organisation they were added for. 
+	*/
+	dictionary<string, string> extraParams;
+}
+
+
+/** Contains updated DataView Item fields.
+ * Use this to update the fields.
+ *
+ * Direction: From the customer Monitor to the DataViewService.
+ *
+ */
+event DataViewUpdateItem { 
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The unique name of the DataView. */
+	string dvName;
+	/** The ID of the Item within the DataView (may be -1 if using keyFields instead). */
+	integer dvItemId;
+	/** The timestamp of the update (seconds since epoch). If the value given is -1.0 then the service will populate it using correlator currentTime. */
+	float timeStamp;
+	/** Sequence of field values in string form. */
+	sequence<string> fieldValues;
+	/** [OPTIONAL] Some implementations may choose to make use of this field. 
+	
+		To avoid collisions with keys that may be added to the product in 
+		future, all user-defined extraParams should start with a prefix 
+		identifying the application or organisation they were added for. 
+	*/
+	dictionary<string, string> extraParams;
+}
+
+
+/** Contains updated DataView Item fields.
+ * Use this to update the fields.
+ *
+ * Direction: From the customer Monitor to the DataViewService.
+ *
+ */
+event DataViewUpdateItemDelta { 
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The unique name of the DataView. */
+	string dvName;
+	/** The ID of the Item within the DataView (may be -1 if using keyFields instead). */
+	integer dvItemId;
+	/** The timestamp of the update (seconds since epoch). If the value given is -1.0 then the service will populate it using correlator currentTime. */
+	float timeStamp;
+	/** Values to be updated. Dictionary Key is index into fields sequence, Value is new field value in sequence. 
+	 If not using dvItemId, then the dictionary MUST contain the key values (even though they have not changed). */
+	dictionary<integer,string> fieldValues;
+	/** [OPTIONAL] Some implementations may choose to make use of this field. 
+	
+		To avoid collisions with keys that may be added to the product in 
+		future, all user-defined extraParams should start with a prefix 
+		identifying the application or organisation they were added for. 
+	*/
+	dictionary<string, string> extraParams;
+}
+
+
+/** Request that a specific Item within a specific DataView is deleted.
+ *
+ * @see DataViewItemDeleted
+ *
+ * Direction: From the customer Monitor to the DataViewService.
+ */
+event DataViewDeleteItem {
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The unique name of the DataView. */
+	string dvName;
+	/** The ID of the Item within the DataView (may be -1 if using keyFields instead). */
+	integer dvItemId;
+	/** [OPTIONAL] Sequence of ONLY key field values (if not using the dvItemId). */
+	sequence<string> keyFields;
+	/** [OPTIONAL] Some implementations may choose to make use of this field. 
+	
+		To avoid collisions with keys that may be added to the product in 
+		future, all user-defined extraParams should start with a prefix 
+		identifying the application or organisation they were added for. 
+	*/
+	dictionary<string, string> extraParams;
+}
+
+
+/** Request that all Items within a specific DataView are deleted.
+ *
+ * @see DataViewAllItemsDeleted
+ *
+ * Direction: From the customer Monitor to the DataViewService.
+ */
+event DataViewDeleteAllItems {
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The unique name of the DataView. */
+	string dvName;
+	/** [OPTIONAL] Some implementations may choose to make use of this field. 
+	
+		To avoid collisions with keys that may be added to the product in 
+		future, all user-defined extraParams should start with a prefix 
+		identifying the application or organisation they were added for. 
+	*/
+	dictionary<string, string> extraParams;
+}
+
+
+/* ==========================================================================
+ * ==========================================================================
+ * Events to that are callbacks from DatavViewService
+ * ==========================================================================
+ * ========================================================================== */
+
+
+/** Confirmation that a specific DataView definition has been added.
+ *
+ * Direction: From the DataViewService to the customer Monitor.
+ */
+event DataViewDefinition {
+	/** Optional application-defined message identifier used to correlate 
+		requests and responses. */
+	string msgId;
+	/** The name that uniquely identifies this DataView (e.g. DataView_XXX). */
+	string dvName;
+	/** The display name of the DataView (e.g. "XXX manager"). */
+	string dvDisplayName;
+	/** Optional field containing a description of this DataView 
+		(e.g. "This DataView exposes XXX objects"). */
+	string dvDescription;
+	/** Specifies the names of each field exposed by the DataView. */
+	sequence<string> fieldNames;
+	/** Specifies the types corresponding to each field in the fieldNames sequence. 
+		Supported types are: string, float, integer, boolean, decimal. */
+	sequence<string> fieldTypes;
+	/** Optional set of field names whose values in an Item are to be combined 
+		to make a unique key that can be used instead of the dvItemId field of 
+		DataViewDeleteItem, DataViewUpdateItem, and DataViewUpdateDelta events.
+ 	*/
+	sequence<string> keyFields;
+	/** Optional dictionary of extra parameters.
+		DataView implementation-specific parameters may also be stored here. */
+	dictionary<string, string> extraParams;
+	/** Prefix for identifying metadata entries in the extraParams dictionary.
+		Entries with key names prefixed by the EXTRA_PARAMS_METADATA_PREFIX 
+		string are considered metadata entries. */
+	constant string EXTRA_PARAMS_METADATA_PREFIX := "Metadata:";
+}
+
+
+/** Indicates that a specific DataView definition is being unloaded.
+ *
+ * Direction: From the DataViewService to the customer Monitor.
+ */
+event DataViewDefinitionDeleted { 
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The unique name of the DataView. */
+	string dvName;
+	/** [OPTIONAL] Some implementations may choose to make use of this field. */
+	dictionary<string, string> extraParams;
+}
+
+
+/** Notifies all interested clients that a new Item has been added to a specific 
+ * DataView. 
+ * The event provides the unique itemID, owner (user), and initial values for 
+ * all fields.
+ *
+ * @see DataViewAddItem
+ *
+ * Direction: From the DataViewService to the customer Monitor.
+ *
+ */
+event DataViewItem { 
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The unique name of the DataView. */
+	string dvName;
+	/** The ID of the Item within the DataView. */
+	integer dvItemId;
+	/** The owner (user) of the Item. */
+	string owner;
+	/** Sequence of field values in string form. */
+	sequence<string> fieldValues;
+	/** [OPTIONAL] Some implementations may choose to make use of this field. */
+	dictionary<string, string> extraParams;
+}
+
+
+/** Notifies all interested clients that a specific Item within a specific 
+ * DataView has been deleted.
+ *
+ * @see DataViewDeleteItem
+ *
+ * Direction: From the DataViewService to the customer Monitor.
+ *
+ */
+event DataViewItemDeleted {
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The unique name of the DataView. */
+	string dvName;
+	/** The ID of the Item within the DataView. */
+	integer dvItemId;
+	/** Sequence of ONLY key field values (for those not using the dvItemId). */
+	sequence<string> keyFields;
+	/** [OPTIONAL] Some implementations may choose to make use of this field. */
+	dictionary<string, string> extraParams;
+}
+
+
+/** Notifies all interested clients that all Items within a specific 
+ * DataView have been deleted.
+ *
+ * @see DataViewDeleteAllItems
+ *
+ * Direction: From the DataViewService to the customer Monitor.
+ *
+ */
+event DataViewAllItemsDeleted {
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The unique name of the DataView. */
+	string dvName;
+	/** [OPTIONAL] Some implementations may choose to make use of this field. */
+	dictionary<string, string> extraParams;
+}
+
+
+/** The helper dictionary to facilitate sequence position lookup
+ *    by field name.
+ *
+ * @see DataViewGetFieldLookup
+ *
+ * Direction: From the DataViewService to the customer Monitor.
+ */
+event DataViewFieldLookup {
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The DataView Name (e.g. conventionally DataView_XXX). */
+	string dvName;
+	/** A map of fieldName:fieldIndex. */
+	dictionary <string, integer> fields;
+	/** [OPTIONAL] Some implementations may choose to make use of this field. */
+	dictionary<string, string> extraParams;
+}
+
+
+/** Indicates that an exception occurred within the DataViewService, and indicates 
+* the name of the specific DataView.
+*
+* Direction: From the DataViewService to the customer Monitor.
+*/
+event DataViewException {
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The unique name of the DataView. */
+	string dvName;
+	/** The message in the exception. This is designed to be human readable, and may change between implementations/versions, hence the wildcard. */
+	wildcard string message;
+	/** [OPTIONAL] Some implementations may choose to make use of this field. */
+	dictionary<string, string> extraParams;
+}
+
+/** Indicates that an exception occurred within the DataViewService, and indicates 
+* the name of the specific DataView, and the Id of the specific Item.
+*
+* Direction: From the DataViewService to the customer Monitor.
+*/
+event DataViewItemException {
+	/** [OPTIONAL] A messageId that applications may choose to use to identify "responses". */
+	string msgId;
+	/** The unique name of the DataView. */
+	string dvName;
+	/** The ID of the Item within the DataView. */
+	integer dvItemId;
+	/** The message in the exception. This is designed to be human readable, and may change between implementations/versions, hence the wildcard. */
+	wildcard string message;
+	/** [OPTIONAL] Some implementations may choose to make use of this field. */
+	dictionary<string, string> extraParams;
+}
+
+
+/** Indicates that the DataView service is being unloaded.
+ *
+ * Direction: From the DataViewService to the customer Monitor.
+ */
+event DataViewServiceUnloaded { 
+	/** [OPTIONAL] Some implementations may choose to make use of this field. */
+	dictionary<string, string> extraParams;
+}
+
+/** Just logs the DataViewService details upon injection
+  @private
+*/
+monitor DataViewService_Interface {
+	// MetaData relating to the interface
+	dictionary<string,string> interfaceMetaData := {
+		"interface.package"     :"com.apama.dataview",
+		"interface.name"        :"DataViewService_Interface",
+		"interface.fileName"    :"DataViewService_Interface.mon",
+		"interface.vendor"      :"Apama",
+		"interface.version"     :"10.0.0.0.302163",
+		"interface.fullVersion" :"rel/10.0.0.x@302163",
+		"interface.language"    :"MonitorScript"
+	};
+
+	action onload() {
+		log "DataViewService interface loaded. MetaData: "+interfaceMetaData.toString() at INFO;
+	}
+}
+

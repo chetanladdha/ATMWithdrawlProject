@@ -1,0 +1,38 @@
+//*****************************************************************************
+// Title:       ScenarioDeleterSupport
+// Description: Provides event definitions for deleting Scenario instances. 
+//
+// Revision:    $Id: ScenarioDeleterSupport.mon 249541 2015-03-09 11:42:24Z bsp $
+//
+// $Copyright(c) 2004-2005, 2008-2009 Progress Software Corporation (PSC). All rights reserved.$
+// $Copyright (c) 2013-2014 Software AG, Darmstadt, Germany and/or Software AG USA Inc., Reston, VA, USA, and/or its subsidiaries and/or its affiliates and/or their licensors.$
+// Use, reproduction, transfer, publication or disclosure is prohibited except as specifically provided for in your License Agreement with Software AG
+//
+//*****************************************************************************
+
+package com.apama.scenarios;
+
+event DeleteAllScenarios {
+	constant string CHANNEL := "ScenarioDeleter";
+}
+
+event DeleteScenariosByUser {
+	string owner;
+}
+
+monitor ScenarioDeleterSupport {
+	
+	action onload() {
+		
+		DeleteAllScenarios deleteAll;
+		on all DeleteAllScenarios():deleteAll {
+			send deleteAll to DeleteAllScenarios.CHANNEL;
+		}
+		
+		DeleteScenariosByUser deleteByUser;
+		on all DeleteScenariosByUser():deleteByUser {
+			send deleteByUser to DeleteAllScenarios.CHANNEL;
+		}
+	}
+	
+}

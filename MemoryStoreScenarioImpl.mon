@@ -1,0 +1,291 @@
+// 
+// Bridges between the MemoryStore and ScenarioService event APIs. 
+//
+// Requires: ScenarioService.mon. 
+//
+// $Copyright(c) 2009-2012 Progress Software Corporation (PSC). All rights reserved.$
+// $Copyright (c) 2013-2016 Software AG, Darmstadt, Germany and/or Software AG USA Inc., Reston, VA, USA, and/or its subsidiaries and/or its affiliates and/or their licensors.$
+// Use, reproduction, transfer, publication or disclosure is prohibited except as specifically provided for in your License Agreement with Software AG
+
+package com.apama.memorystore;
+
+using com.apama.scenario.Update;
+using com.apama.scenario.Create;
+using com.apama.scenario.Delete;
+using com.apama.scenario.Edit;
+using com.apama.scenario.Created;
+using com.apama.scenario.Deleted;
+using com.apama.scenario.Edited;
+using com.apama.scenario.InstanceDied;
+using com.apama.scenario.Instance;
+using com.apama.scenario.RequestInstancesDone;
+using com.apama.scenario.RequestInstancesInternal;
+using com.apama.scenario.Scenario;
+using com.apama.scenario.ScenarioServiceUpdaterMultipleInstances;
+using com.apama.scenario.ScenarioServiceLibrary;
+using com.apama.scenario.StartScenarioRecovery;
+using com.apama.scenario.ConfigureUpdates;
+using com.apama.scenario.GetAllConfiguration;
+using com.apama.scenario.AllConfiguration;
+
+/**
+	Requests Scenario Service updates for an exposed MemoryStore to be 
+	forwarded to the specified Correlator context. 
+	
+	Note that this is inefficient and does not implement proper flow
+	control. Only use for testing or debugging. 
+	
+	@see Schema#exposeMemoryView Only tables that are configured to expose 
+		their contents will be affected by this event. 
+*/
+event ForwardMemoryStoreUpdatesTo {
+	/** The context to which events should be forwarded. */
+	context ctx;
+}
+
+/** Makes data in MemoryStore available for viewing by 
+	any dashboard client that uses the Scenario Service, or as a 
+	DataView. 
+	
+	@private
+*/
+monitor MemoryStoreScenarioImpl
+{
+	import "MemoryStorePlugin" as plugin;
+
+	string MEMORYSTORE_SCENARIO_PREFIX := "DV_MEMST_";
+	string PREFIX_UPPER := "DV_MEMST`";
+	Scenario recoveryResponse;
+	boolean doingRecovery;
+	// a private context that sends events out.  Should never block on something 
+	// that may be blocking on the memory store plugin. That means no 
+	// calling into the plugin and no direct send-to to any other 
+	// context that may call the plugin.
+	// Deadlocks can be avoided using the asyncEnqueuTo method on the
+	// plugin, but must only do so if there can only be a bounded 
+	// number of such events queued; we use it for scenario discovery only.
+	context emitterContext := context("MemoryStore_emitter");
+	context asyncForwarding := context("MemoryStore_forwarder");
+	context mainContext := context.current();
+
+	action onload()
+	{
+		spawn asyncForwarder() to asyncForwarding;
+		integer id:=integer.getUnique();
+		route GetAllConfiguration(id);
+		AllConfiguration allConfig;
+		on AllConfiguration(requestId = id):allConfig {
+			startup(allConfig.defaultConfig, allConfig.configurations);
+		}
+	}
+
+	event RequestInstancesHandler {
+		import "MemoryStorePlugin" as plugin;
+		RequestInstancesInternal scenRequestInstances;
+		ScenarioServiceUpdaterMultipleInstances updater;
+		action<string, RequestInstancesInternal, ScenarioServiceUpdaterMultipleInstances> handleRequestInstances;
+		context emitterContext;
+
+		action onConfig() {
+			sequence<string> names := ["", ""];
+			plugin.decodeScenarioName(scenRequestInstances.scenarioId, names);
+			string storeName := names[0], tableName := names[1];
+
+			Storage storage := new Storage;
+			if storage.hasStore(storeName)
+			{
+				Store store := storage.open(storeName);
+				if store.hasTable(tableName)
+				{
+					if updater.base.sendAny
+					{
+						if plugin.exposingViews(tableName,storeName,isMemory(scenRequestInstances.scenarioId)) {
+							spawn spawnTarget() to emitterContext;
+							plugin.sendScenarioInstancesFor(tableName,storeName,isMemory(scenRequestInstances.scenarioId),scenRequestInstances.messageId);
+						} else {
+							route com.apama.scenario.RequestInstancesDone(scenRequestInstances.scenarioId, scenRequestInstances.messageId);
+						}
+					} else {
+						route com.apama.scenario.RequestInstancesDone(scenRequestInstances.scenarioId, scenRequestInstances.messageId);
+					}
+				}
+			}
+			updater.destroy();
+		}
+		action spawnTarget() {
+			handleRequestInstances(scenRequestInstances.scenarioId, scenRequestInstances, updater);
+		}
+
+		action isMemory(string name) returns boolean
+		{
+			string MEMORYSTORE_SCENARIO_MEMORY_SUFFIX := "_memory";
+			integer index := name.find(MEMORYSTORE_SCENARIO_MEMORY_SUFFIX);
+			return index > 0;
+		}
+	}
+
+	event InvalidRequestHandler {
+		ScenarioServiceUpdaterMultipleInstances updater;
+		integer messageId;
+		integer scenarioInstanceId;
+
+		action handle(string scenarioId, integer messageId, integer scenarioInstanceId) {
+			self.messageId := messageId;
+			self.scenarioInstanceId := scenarioInstanceId;
+			updater.init_cb(scenarioId, context.current(), onConfig);
+		}
+
+		action onConfig() {
+			updater.emitNack(messageId, scenarioInstanceId);
+			updater.destroy();
+		}
+	}
+	
+	action startup(dictionary<string, string> defaultConfig, dictionary<string, dictionary<string, string> > configurations) {
+		spawn handleNewScenarios(defaultConfig, configurations) to emitterContext;
+
+		//setup listener to listen for discovery
+		on all StartScenarioRecovery()
+		{
+			doingRecovery := true;
+			chunk c := plugin.prepareScenariosSnapshot2();
+			integer count := plugin.ScenarioChunk_count(c);
+			integer i := 0;		
+			while i < count
+			{
+				recoveryResponse.scenarioId := plugin.ScenarioChunk_getId(c,i);
+				recoveryResponse.displayName := plugin.ScenarioChunk_getName(c,i);
+				recoveryResponse.description := plugin.ScenarioChunk_getDescription(c,i);
+				recoveryResponse.outputNames := [];
+				integer numFields := plugin.ScenarioChunk_getFieldsLength(c,i);
+				integer j := 0;
+				while j < numFields
+				{
+					recoveryResponse.outputNames.append(plugin.ScenarioChunk_getField(c,i,j));
+					j := j + 1;
+				}
+				recoveryResponse.outputTypes := [];
+				integer numTypes := plugin.ScenarioChunk_getTypesLength(c,i);
+				j := 0;
+				while j < numTypes
+				{
+					recoveryResponse.outputTypes.append(plugin.ScenarioChunk_getType(c,i,j));
+					j := j + 1;
+				}
+				i := i + 1;
+				recoveryResponse.extraParams := {"isReadOnly":"true", "type":"dataview"};
+				route recoveryResponse;
+			}
+
+		}
+		on all completed StartScenarioRecovery() {
+			doingRecovery := false;
+		}
+
+		// initialisation - send all scenarios to the emitter context, spawn for each scenario
+
+		plugin.setEmitContext(emitterContext.getId());
+
+		{
+			chunk c := plugin.prepareScenariosSnapshot2();
+			integer count := plugin.ScenarioChunk_count(c);
+			integer i := 0;		
+
+			while i < count
+			{
+				spawn handleScenario(plugin.ScenarioChunk_getId(c,i)) to emitterContext;
+				i := i + 1;
+			}
+		}
+
+		// forward scenario service requests:
+		ConfigureUpdates configUpdate;
+		on all ConfigureUpdates():configUpdate {
+			send configUpdate to emitterContext;
+		}
+		RequestInstancesInternal scenRequestInstances;
+		on all RequestInstancesInternal(scenarioId in (MEMORYSTORE_SCENARIO_PREFIX : PREFIX_UPPER)):scenRequestInstances
+		{
+			ScenarioServiceUpdaterMultipleInstances updater := new ScenarioServiceUpdaterMultipleInstances;
+			RequestInstancesHandler handler := RequestInstancesHandler(scenRequestInstances, updater, handleRequestInstances, emitterContext);
+			updater.init_cb(scenRequestInstances.scenarioId, context.current(), handler.onConfig);
+		}
+		Create scenCreate;
+		on all Create(scenarioId in (MEMORYSTORE_SCENARIO_PREFIX : PREFIX_UPPER)):scenCreate
+		{
+			InvalidRequestHandler handler:=new InvalidRequestHandler;
+			handler.handle(scenCreate.scenarioId, scenCreate.messageId, -1);
+		}
+
+		Delete scenDel;
+		on all Delete(scenarioId  in (MEMORYSTORE_SCENARIO_PREFIX : PREFIX_UPPER)):scenDel
+		{
+			InvalidRequestHandler handler:=new InvalidRequestHandler;
+			handler.handle(scenDel.scenarioId, scenDel.messageId, scenDel.scenarioInstanceId);
+		}
+
+		Edit scenEdit;
+		on all Edit(scenarioId in (MEMORYSTORE_SCENARIO_PREFIX : PREFIX_UPPER)):scenEdit
+		{
+			InvalidRequestHandler handler:=new InvalidRequestHandler;
+			handler.handle(scenEdit.scenarioId, scenEdit.messageId, scenEdit.scenarioInstanceId);
+		}
+		ForwardMemoryStoreUpdatesTo f;
+		on all ForwardMemoryStoreUpdatesTo():f {
+			spawn forwardUpdatesTo(f.ctx) to emitterContext;
+		}
+	}
+
+	action handleNewScenarios(dictionary <string,string> defaultConfig, dictionary <string, dictionary<string,string> > configurations) {
+
+		Scenario scenario;
+		on all unmatched Scenario(scenarioId in (MEMORYSTORE_SCENARIO_PREFIX : PREFIX_UPPER)):scenario
+		{
+			send scenario to "com.apama.scenario";
+			spawn handleScenario(scenario.scenarioId);
+		}
+		ScenarioServiceLibrary.configurationManager(defaultConfig, configurations);
+	}
+	
+
+
+	action handleScenario(string scenarioId) {
+		on all Scenario(scenarioId = scenarioId) {}
+
+		ScenarioServiceUpdaterMultipleInstances updater := new ScenarioServiceUpdaterMultipleInstances;
+		updater.init(scenarioId, asyncForwarding);
+		updater.emitReceivedEvents();
+	}
+
+	action handleRequestInstances(string scenarioId, RequestInstancesInternal scenRequestInstances, ScenarioServiceUpdaterMultipleInstances updater) {
+		Instance scenInstance;
+		on all Instance(scenarioId = scenarioId, messageId = scenRequestInstances.messageId):scenInstance and 
+			not RequestInstancesDone(scenarioId = scenarioId, messageId = scenRequestInstances.messageId) {
+			updater.emitReceivedInstance(scenRequestInstances, scenInstance);
+		}
+		RequestInstancesDone rid;
+		on all RequestInstancesDone(scenarioId = scenarioId, messageId = scenRequestInstances.messageId):rid {
+			integer _ := plugin.asyncEnqueueTo(rid.toString(), mainContext.getId()); // doesn't matter when it completes
+			die;
+		}
+	}
+
+	action asyncForwarder() {
+		Instance i;
+		on all Instance():i {
+			integer _:=plugin.asyncEnqueueTo(i.toString(), mainContext.getId());
+		}
+		RequestInstancesDone rid;
+		on all RequestInstancesDone():rid {
+			integer _:=plugin.asyncEnqueueTo(rid.toString(), mainContext.getId());
+		}
+	}
+
+	action forwardUpdatesTo(context ctx) {
+		Update u;
+		on all Update(scenarioId in (MEMORYSTORE_SCENARIO_PREFIX : PREFIX_UPPER)):u {
+			integer _:=plugin.asyncEnqueueTo(u.toString(), ctx.getId());
+		}
+	}
+}
+

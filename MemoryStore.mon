@@ -1,0 +1,1177 @@
+//
+// MemoryStore.mon
+//
+// Provide shared and (optionally) persistent storage to MonitorScripts
+//
+// $Copyright(c) 2009,2012-2013 Progress Software Corporation (PSC). All rights reserved.\$
+// $Copyright (c) 2013-2017 Software AG, Darmstadt, Germany and/or Software AG USA Inc., Reston, VA, USA, and/or its subsidiaries and/or its affiliates and/or their licensors.\$
+// Use, reproduction, transfer, publication or disclosure is prohibited except as specifically provided for in your License Agreement with Software AG
+
+package com.apama.memorystore;
+
+/** Sent to the application when an asynchronous activity has finished. 
+*/
+event Finished {
+	/** A unique identifier for the operation that has completed, 
+		which will have been returned by the action that initiated the 
+		operation. */
+	integer id;
+	/** True if the operation succeeded. */
+	boolean success;
+	/** An optional status or error message providing more detail 
+		about why the operation succeeded or failed. */
+	string status;
+}
+
+/** Represents the schema for a table in the store, specifying the field 
+	names, types, and other behavioural information about the table. 
+
+	The fields and types sequences must be the same length as one another, 
+	specifying the names of fields and their corresponding types.
+	
+	Never construct a Schema using a "Schema(...)" expression. 
+	Instead, always create a variable initialized to "new Schema", and then set 
+	parameters individually with separate statements. This ensures that your 
+	code will continue to work without modification if a subsequent version 
+	of the MemoryStore adds more parameters to the Schema event.
+	
+	@see Store#prepare() The schema for a table is specified when it is 
+		prepared. 
+*/
+event Schema {
+	/** A sequence specifying the name of each field in this table. 
+
+		For looking up the index of a specific field name (e.g. while 
+		processing RowChanged events), use Table.getFieldIndex() which is 
+		more efficient than using indexOf() on the fields sequence.
+		
+		@see Table#getFieldIndex() for efficiently obtaining the index of 
+		a field.
+	**/
+	wildcard sequence<string> fields;
+	
+	/** A sequence specifying the type of each field in this table. 
+	
+		Permitted types are currently: 'integer', 'boolean', 'float', 'string'
+		and 'decimal'.
+		
+		This sequence must have the same length as the fields sequence. 
+	*/
+	wildcard sequence<string> types;
+	
+	/** When this field is true, the MemoryStore makes the rows in the 
+		in-memory table associated with this schema available to the 
+		scenario service, so they can be used by external clients and 
+		dashboards. 
+		
+		That is, the MemoryStore creates DataViews that contain the state of 
+		this table that has been committed (but not necessarily persisted) to 
+		the shared in-memory representation of the table.
+		
+		Committing changes to the in-memory row in a table that is exposing 
+		its in-memory state causes events to be sent to the main context. 
+	 */
+	boolean exposeMemoryView;
+	/** When this field is true, the MemoryStore makes the rows in the 
+		on-disk table associated with this schema available to the 
+		scenario service, so they can be used by external clients and 
+		dashboards.  
+		
+		That is, the MemoryStore creates DataViews that contain data from this 
+		table that has been persisted to disk. 
+		
+		You cannot expose a persistent view of a table in a 
+		correlator-persistent store.
+ 	*/
+	boolean exposePersistentView;
+	
+	/** Specifies the display name for an in-memory table. */
+	string memoryViewDisplayName;
+	/** Describes an in-memory table. */
+	string memoryViewDescription;
+	/** Specifies the display name for an on-disk table. */
+	string persistentViewDisplayName;
+	/** Describes an on-disk table. */
+	string persistentViewDescription;
+}
+
+/** Represents an ordered and typed set of named fields in a table, with a 
+	key that uniquely identifies the row within the table. 
+
+	A Row is an atomic snapshot of the data in the
+	table and once returned, a Row's contents are guaranteed to be consistent 
+	and unchanging.
+
+	Any changes the user makes to a Row are local until commit is called.
+	
+	@see Table A table holds a collection of rows. 
+*/
+event Row {
+	/** @private*/ import "MemoryStorePlugin" as plugin;
+	/** @private*/ wildcard chunk c;
+
+	/** Update the local Row event to reflect the current state of the shared
+		MemoryStore table, losing any local modifications.
+	
+		row.update() has a very similar effect to r := t.get(r.getKey()),
+		but is more efficient and doesn't require access to the table.
+	*/
+	action update() {
+		plugin.RowChunk_update(c);
+	}
+
+	/** Copy the contents of the specified other Row into this one.
+	
+		The two rows that these Row events represent must have the same schema 
+		but they need not be in the same table.
+
+		r1.copy(r2) is a more efficient equivalent to
+		r1.setX("a", r2.getX("a")) for every field. 
+		
+		You cannot copy a row between a correlator-persistent store and an 
+		in-memory, on-disk or distributed store.
+	*/
+	action copy(Row other) {
+		plugin.RowChunk_copy(c, other.c);
+	}
+
+	/** Mark the row for deletion when the table is committed.
+	
+		Fields cannot be accessed after this call, until the removal is
+		successfully committed (or reverted using update).
+	*/
+	action remove() {
+		plugin.RowChunk_remove(c);
+	}
+	
+	/** Try to commit changes from this Row back to the table, returning false 
+		if the Row is not up to date.
+	
+		If nothing else has modified the row in the table since this
+		Row was created, the changes are committed so other users can
+		see them and true is returned.
+	
+		Otherwise, false is returned and the table is left unchanged. 
+		Do not repeatedly call tryCommit() without also calling update(), 
+		or use the more efficient Row.tryCommitOrUpdate(). 
+		
+		Note that a MemoryStore commit operation synchronously writes changes 
+		made to the local Row instance back to the table which is shared by all 
+		monitors inside the Correlator (or the distributed store), but does not 
+		cause a persistent write to disk (see Table#persist). 
+
+		@return true if the table was modified; false if an error occurred and 
+		the table was not changed. 
+		
+		@see Row#tryCommitOrUpdate()
+	*/
+	action tryCommit() returns boolean {
+		return plugin.RowChunk_tryCommit(c,currentTime);
+	}
+
+
+	/** Try to commit changes from this Row back to the table, which could 
+		result in an exception being thrown if the Row is not up to date.
+	
+		If nothing else has modified the row in the table since this
+		Row was created, the changes are committed so other users can
+		see them.
+	
+		Otherwise, the monitor instance terminates with an error and the table 
+		is left unchanged.
+		
+		If there is any chance that the same row may be written to 
+		concurrently - for example by multiple correlator contexts, and/or if 
+		using a distributed MemoryStore - use Row.tryCommit() instead of 
+		Row.commit() so that it is possible to recover from this situation 
+		when it occurs. 
+
+		Note that a MemoryStore commit operation synchronously writes changes 
+		made to the local Row instance back to the table which is shared by all 
+		monitors inside the Correlator (or the distributed store), but does not 
+		cause a persistent write to disk (see Table#persist). 
+
+		@see Row#tryCommit()
+		@see Row#tryCommitOrUpdate()
+	*/
+	action commit() {
+		plugin.RowChunk_commit(c,currentTime);
+	}
+
+	/** Try to commit, or update if not. 
+	
+		This is a more efficient equivalent to calling tryCommit then
+		calling update if returning false.
+	
+		Note that a MemoryStore commit operation synchronously writes changes 
+		made to the local Row instance back to the table which is shared by all 
+		monitors inside the Correlator (or the distributed store), but does not 
+		cause a persistent write to disk (see Table#persist). 
+		
+		@return true if the commit succeeded, false if the commit failed but 
+		the row has been updated ready for a retry attempt. 
+		
+	*/
+	action tryCommitOrUpdate() returns boolean {
+		return plugin.RowChunk_tryCommitOrUpdate(c,currentTime);
+	}
+
+	/** Get the key for this Row. 
+	
+		It cannot be changed.
+	*/
+	action getKey() returns string {
+		return plugin.RowChunk_getKey(c);
+	}
+
+	/** Indicate whether this row was in the table when the Row
+		was created or updated. 
+		
+		It is possible to construct a Row that has no corresponding entry in 
+		the table, in which case all fields have default values. 
+		
+		Calling commit on a Row for which inTable()=false will create the row.
+	*/
+	action inTable() returns boolean {
+		return plugin.RowChunk_inTable(c);
+	}
+
+	// Get the value
+	//
+	// The correct variant must be called for the type of the column
+	// in the table.
+
+	/** Get the value of the specified field in this row 
+		(must only be used on boolean fields). 
+	*/
+	action getBoolean(string name) returns boolean {
+		return plugin.RowChunk_getBoolean(c,name);
+	}
+
+	/** Get the value of the specified field in this row 
+		(must only be used on integer fields). 
+	*/
+	action getInteger(string name) returns integer {
+		return plugin.RowChunk_getInteger(c,name);
+	}
+
+	/** Get the value of the specified field in this row 
+		(must only be used on float fields). 
+	*/
+	action getFloat(string name) returns float {
+		return plugin.RowChunk_getFloat(c,name);
+	}
+
+	/** Get the value of the specified field in this row 
+		(must only be used on string fields). 
+	*/
+	action getString(string name) returns string {
+		return plugin.RowChunk_getString(c,name);
+	}
+
+	/** Get the value of the specified field in this row 
+		(must only be used on decimal fields). 
+	*/
+	action getDecimal(string name) returns decimal {
+		return plugin.RowChunk_getDecimal(c,name);
+	}
+
+	// Set the value
+	//
+	// The correct variant must be called for the type of the column
+	// in the table.
+
+	/** Set the value of the specified field in this row 
+		(must only be used on boolean fields). 
+	*/
+	action setBoolean(string name, boolean b) {
+		plugin.RowChunk_setBoolean(c,name,b);
+	}
+
+	/** Set the value of the specified field in this row 
+		(must only be used on integer fields). 
+	*/
+	action setInteger(string name, integer i) {
+		plugin.RowChunk_setInteger(c,name,i);
+	}
+
+	/** Set the value of the specified field in this row 
+		(must only be used on float fields). 
+	*/
+	action setFloat(string name, float f) {
+		plugin.RowChunk_setFloat(c,name,f);
+	}
+
+	/** Set the value of the specified field in this row 
+		(must only be used on string fields). 
+	*/
+	action setString(string name, string s) {
+		plugin.RowChunk_setString(c,name,s);
+	}
+
+	/** Set the value of the specified field in this row 
+		(must only be used on decimal fields). 
+	*/
+	action setDecimal(string name, decimal d) {
+		plugin.RowChunk_setDecimal(c,name,d);
+	}
+
+	/** Get the name of the Table that contains this Row. */
+	action getTableName() returns string {
+		return plugin.RowChunk_getTableName(c);
+	}
+
+	/** Get the name of the Store that contains this Row's Table. */
+	action getStoreName() returns string {
+		return plugin.RowChunk_getStoreName(c);
+	}
+}
+
+
+/**
+ * Sent to the application on every successful row commit in tables
+ * the application has subscribed to.
+ *
+ * Supported in distributed stores only.
+ *
+ * Events are sent for every change, whether from the local or a
+ * remote node, for tables where the subscribe method has been called.
+ *
+ * The old and new values are provided as sequences.  Access to previous
+ * and new values are thus available if the driver and distmemstore
+ * support it (and note the setting of rowChangedOldValueRequired); for
+ * example:
+ <pre>
+<br/>	integer positionRowId := tbl.getFieldIndex("position");
+<br/>	RowChanged rowChanged;
+<br/>	on all RowChanged(storeName = STORE, 
+<br/>	                  tableName = TABLE):rowChanged {
+<br/>		// we handle things simply by treating an update as a remove followed by an insert:
+<br/>		if (rowChanged.changeType = RowChanged.REMOVE or
+<br/>		    rowChanged.changeType = RowChanged.UPDATE) {
+<br/>			position := position - float.parse(rowChanged.oldFieldValues[positionRowId]);
+<br/>		}
+<br/>		if rowChanged.changeType = RowChanged.INSERT or
+<br/>		   rowChanged.changeType = RowChanged.UPDATE {
+<br/>			position := position + float.parse(rowChanged.newFieldValues[positionRowId]);
+<br/>		}
+<br/>		log "Position is now "+position.toString();
+<br/>	}
+ </pre>
+ * @see Table#subscribeRowChanged() for subscribing to RowChanged events
+ */
+event RowChanged {
+	/** Value for changeType when a row is added to a table. */
+	constant integer INSERT := 1;
+
+	/** Value for changeType when a row is removed from a table. */
+	constant integer REMOVE := 2;
+
+	/** Value for changeType when a row is modified in a table. */
+	constant integer UPDATE := 3;
+
+	/**
+	 * One of INSERT, REMOVE, UPDATE for
+	 * rows being added, removed, updated.
+	 */
+	integer changeType;
+
+	/**
+	 * Name of the store that the table is in.
+	 */
+	string storeName;
+
+	/**
+	 * Name of the table that the row is in.
+	 */
+	string tableName;
+
+	/**
+	 * The key value for the changed row.
+	 */
+	string key;
+
+	/**
+	 * Old values of the row, if available.
+	 *
+ 	 * The old values of the row, in toString() format, in the
+	 * order defined by the table's Schema.  For UPDATE
+	 * changeTypes, this is only populated if the storeFactory
+	 * bean property rowChangedOldValueRequired is true (the
+	 * default value is provider-specific).
+	 *
+	 * For INSERT (or UPDATE if rowChangedOldValueRequired is
+	 * false), this will be an empty sequence, otherwise it will
+	 * have as many entries as there are fields in the schema.
+	 *
+	 * The field values can be recovered by using the parse method
+	 * on the field's type
+	 * (e.g. <tt>integer.parse(rc.oldFieldValues[i])</tt>),except
+	 * for strings which are inserted without any escaping, so do
+	 * not need to be parsed. 
+	 *
+	 * Use Table.getFieldIndex() to efficiently map a field name
+	 * to an index in this sequence (although consider caching the
+	 * index in a variable to avoid unnecessary lookups).
+	 *
+	 * @see Table#getFieldIndex() for mapping from field name to
+	 * index.
+	 */
+	sequence<string> oldFieldValues;
+
+	/**
+	 * New values of the row.
+	 *
+ 	 * The new values of the row, in toString() format, in the order defined 
+	 * by the table's Schema.
+	 *
+	 * For REMOVE, this will be an empty sequence, otherwise it 
+	 * will have as many entries as there are fields in the schema.
+	 *
+	 * The field values can be recovered by using the parse method
+	 * on the field's type (e.g. <tt>integer.parse(rc.newFieldValues[i])</tt>), 
+	 * except for strings which are inserted without any escaping, so do not 
+	 * need to be parsed. 
+	 *
+	 * Use Table.getFieldIndex() to efficiently map a field name to an index 
+	 * in this sequence (although consider caching the index in a 
+	 * variable to avoid unnecessary lookups).
+	 *
+	 * @see Table#getFieldIndex() for mapping from field name to index. 
+	 */
+	sequence<string> newFieldValues;
+	
+	/** 
+	 * Get a display string representing this event's change type. 
+	 *
+	 * @return "INSERT", "REMOVE" or "UPDATE". 
+	 */
+	action getChangeTypeString() returns string {
+		if changeType = INSERT {
+			return "INSERT";
+		} else if changeType = REMOVE {
+			return "REMOVE";
+		} else if changeType = UPDATE {
+			return "UPDATE";
+		} else {
+			return "UNKNOWN:"+changeType.toString();
+		}
+	}
+}
+
+/**
+ * Optionally sent to the application if the driver has detected that some of the RowChanged events may have been
+ * dropped for a table the application has subscribed to.
+ *
+ * Supported in distributed stores only.
+ *
+ * @see Table#subscribeRowChanged() for subscribing to RowChanged and MissedRowChanges events
+ */
+event MissedRowChanges {
+	/**
+	 * Name of the store that the table is in.
+	 */
+	string storeName;
+
+	/**
+	 * Name of the table that has received a disconnection.
+	 */
+	string tableName;
+}
+
+
+
+/** Represents an iterator that can be used to step through each 
+	Row of a Table in turn, making changes or reading data from the row. 
+	
+	@see Table#begin() Gets an iterator, beginning from the start of the table.
+*/
+event Iterator {
+	/** @private*/ import "MemoryStorePlugin" as plugin;
+	/** @private*/ wildcard chunk c;
+
+	/** Checks whether this Iterator has now reached the end of
+		the Table. 
+	
+		You should check done() is not true before you call other Iterator 
+		actions (except for appendKeys() and getKeys()).
+	*/
+	action done() returns boolean {
+		return plugin.IteratorChunk_done(c);
+	}
+
+	/** Step this Iterator to the next row in the table.
+	
+		If there are no more rows the Iterator becomes done. 
+		
+		To avoid an error that will terminate the monitor instance, always 
+		use done() to check that the iterator has not reached the end of the 
+		table before calling this action. 		
+	*/
+	action step() {
+		plugin.IteratorChunk_step(c);
+	}
+	
+	/** Get the key for the row this Iterator is pointing at.
+	
+		To avoid an error that will terminate the monitor instance, always 
+		use done() to check that the iterator has not reached the end of the 
+		table before calling this action. 
+	*/
+	action getKey() returns string {
+		return plugin.IteratorChunk_getKey(c);
+	}
+
+	/** Get the Row this Iterator is pointing at.
+	
+		It is possible that the row the iterator is pointing at is no longer 
+		present. This can happen if another monitor deleted the row or table, 
+		or cleared the table while the iterator was pointing at that row.
+
+		If the requested row is no longer there, you receive a Row event that 
+		represents a row in which all fields have default values and for which 
+		Row.inTable() is false. This is the same result as if you call 
+		Table.get() on a key that does not exist yet.
+	
+		To avoid an error that will terminate the monitor instance, always 
+		use done() to check that the iterator has not reached the end of the 
+		table before calling this action. 
+	*/
+	action getRow() returns Row {
+		return Row(plugin.IteratorChunk_getRow(c));
+	}
+
+	/** Append to the specified sequence, keys for up to n consecutive
+		rows of the Table, beginning where this Iterator is pointing.
+	
+		The iterator will be advanced. If it becomes
+		done then fewer than n keys will be appended.
+		
+		@param seq The sequence which is to be updated with the keys from the 
+		following n table rows. 
+		@param n The number of keys to get and append to the sequence. 
+	*/
+	action appendKeys(sequence<string> seq, integer n) {
+		integer start := seq.size();
+		seq.setSize(start+n);
+		seq.setSize(plugin.IteratorChunk_appendKeysImpl(c, seq, start));
+	}
+
+	/** Get the keys for up to n consecutive rows of the Table beginning
+		where this Iterator is pointing.
+	
+		The iterator will be advanced. If it becomes
+		done, a sequence of fewer than n keys will be returned.
+
+		The first key in the returned sequence is the key of the row that the 
+		iterator is pointing at when the action is called. When this action is 
+		finished, the iterator is pointing at the row immediately beyond that 
+		of the last key that was returned. 
+		
+		@param n The number of keys to get and append to the sequence. 
+	*/
+	action getKeys(integer n) returns sequence<string> {
+		sequence<string> result := new sequence<string>;
+		appendKeys(result, n);
+		return result;
+	}
+}
+
+/** Represents a collection of rows in a store, with a defined schema.
+	
+	A table consists of a series of rows, each identified by a key and
+	containing other values with names and types according to the
+	table's Schema.
+	
+	A table typically resides in memory, you can also store it on 
+	disk if you want to, or a table can be stored on a distributed cache.
+	
+	@see Store#open() Tables exist within a named Store, which is used to 
+		create and open tables. 
+*/
+event Table {
+	/** @private*/ import "MemoryStorePlugin" as plugin;
+	/** @private*/ wildcard chunk c;
+
+
+	/** Add the table Row with the specified key.
+	
+		On distributed stores, for performance reasons this action doesn't
+		check if there is a Row already present in the the table with the
+		specified key. To check if the Row is present in the store, use the
+		Table.get() action.
+		
+		@param key The name/key uniquely identifying the row. 
+		@return An empty Row event.
+	*/
+	action add(string key) returns Row {
+		return Row(plugin.TableChunk_add(c, key));
+	}
+
+	/** Get the table Row with the specified key. 
+	
+		If there is no row with the specified key, this action returns 
+		without error, with a Row event that contains default values for the 
+		fields in the row. A call to the Row.inTable() action returns false.
+		
+		@param key The name/key uniquely identifying the row. 
+		@return A Row event representing an atomic snapshot of the committed 
+			data in the table when the action was called. 		
+	*/
+	action get(string key) returns Row {
+		return Row(plugin.TableChunk_get(c,key));
+	}
+	
+	/** Remove the specified row from the table. 
+	
+		If the row does not exist, this action does nothing.
+
+		@param key The name/key uniquely identifying the row. 
+	*/
+	action remove(string key) {
+		plugin.TableChunk_remove(c,key);
+	}
+
+	/** Change the row with the specified key by applying an action to it.
+	
+		It is possible for another context to commit changes to this row 
+		between the time mutate() obtains a Row event to represent the row and 
+		the time mutate() tries to commit the changes that result from 
+		executing the specified action. In this situation, the MemoryStore 
+		automatically calls the specified action again on the most recently 
+		committed row content; therefore mutation actions must be designed to 
+		cope with being called repeatedly without causing unwanted side 
+		effects.
+	
+		@param name The name/key uniquely identifying the row. 
+		@param a An action that (idempotently) performs the desired change to 
+			the row. 
+	*/
+	action mutate(string key, action<Row> a) {
+		Row row := get(key);
+		boolean done := false;
+		while not done { a(row); done := row.tryCommitOrUpdate(); }
+	}
+
+	/** Mutate all rows in the Table by applying the specified action.
+	
+		This can temporarily consume a lot of memory when called on a 
+		relatively large table because the Correlator does no garbage 
+		collection until action execution is complete. A few thousand rows are 
+		unlikely to present a problem. Beyond that, it depends on how many 
+		fields are in each row, how many rows are in the table, and how much 
+		RAM is available.
+
+		@param a An action that performs the desired change to 
+			each row in the table. 
+	*/
+	action mutateAll(action<Row> a) {
+		Iterator i := begin();
+		while not i.done() {
+			Row row := i.getRow();
+			boolean done := false;
+			while row.inTable() and not done {
+				a(row); done := row.tryCommitOrUpdate();
+			}
+			i.step();
+		}
+	}
+
+	/** Remove all rows from the table. */
+	action clear() {
+		plugin.TableChunk_clear(c);
+	}
+
+	/** Indicate whether or not a row with the specified key is present
+		in the table.
+	
+		t.hasKey("foo") is a more efficient alternative to
+		t.get("foo").inTable()
+		
+		@param key The name/key uniquely identifying the row. 
+	*/
+	action hasKey(string key) returns boolean {
+		return plugin.TableChunk_hasKey(c,key);
+	}
+
+	/** Return an iterator to the beginning of the Table.
+	*/
+	action begin() returns Iterator {
+		return Iterator(plugin.TableChunk_begin(c));
+	}
+
+	/** Returns a sequence that contains the keys for all the rows in this 
+		table. 
+		
+		The keys are in an arbitrary order.
+ 	*/
+	action getKeys() returns sequence<string> {
+		Iterator i := begin();
+		sequence<string> result := i.getKeys(plugin.TableChunk_size(c));
+		// Clean up any residue if a race means we didn't get everything
+		while not i.done() { i.appendKeys(result, 16); }
+		return result;
+	}
+
+	/** Persist this table's committed changes back to stable storage, asynchronously.
+	
+		Note that any local changes to a Row that were not committed will not 
+		be written to disk (see Row#commit()). 
+
+		Only on-disk persistent stores can be persisted using this action. 
+		It is not possible to call this method on Correlator-persistent tables 
+		since all changes committed to such tables will be written to disk 
+		automatically in the same transaction as changes to the state of 
+		persistent EPL monitors. 
+		
+		@return The unique identifier for this operation, which will be 
+			included in the Finished event sent after the operation is 
+			complete. 
+		@see Finished A Finished event will be sent when this asynchronous 
+			operation has completed. 
+	*/
+	action persist() returns integer {
+		return plugin.TableChunk_persist(c,currentTime);
+	}
+
+	/** Enqueue an event for each row in the table, taken by parsing the string 
+		data in the specified table field/column as an event string.
+		
+		The field must be of string type, and its value for every row should be 
+		an Apama event string, in the same form that you would send to the 
+		Correlator (e.g. "mypackage.MyEvent(123, [false,true])")
+
+	
+		This action is most likely to be useful when you are migrating from the 
+		StateStore Correlator plug-in to the MemoryStore. In the StateStore 
+		plug-in, persistent data re-entered the Correlator as sent events.
+		
+		This is only supported for non-distributed stores.
+	
+		@param fieldName The name of the table field whose values are event 
+			strings that should be sent. 
+		@return The unique identifier for this operation, which will be 
+			included in the Finished event sent after the column data for 
+			the last row has been sent. 
+		@see Finished A Finished event will be sent when this asynchronous 
+			operation has completed. 
+	*/
+	action enqueueColumn(string fieldName) returns integer {
+		return plugin.TableChunk_enqueueColumn(c, fieldName);
+	}
+
+	/** Get the name of this Table. */
+	action getTableName() returns string {
+		return plugin.TableChunk_getTableName(c);
+	}
+
+	/** Get the name of the Store that contains this table. */
+	action getStoreName() returns string {
+		return plugin.TableChunk_getStoreName(c);
+	}
+
+	/**
+	 * Subscribe to be notified of all successful commits in
+	 * this table.
+	 *
+ 	 * This is only supported for tables in a distributed store, 
+	 * and only if the underlying provider supports this feature. 
+	 *
+	 * The monitor instance will be terminated with an error if this 
+	 * action is called on a store that does not support it. 
+	 *
+	 * It is important to note that (due to the nature of distributed store 
+	 * technology) there is no way to atomically subscribe to notifications 
+	 * and get an initial snapshot of the table's contents, so 
+	 * applications that perform an initial iteration over the table's contents 
+	 * to initialize some state before subscribing are at risk of 
+	 * double-counting any keys that are mutated after the subscription 
+	 * and during the iteration/initialization process. 
+	 *
+	 * For tables that are relatively small (and fit entirely inside the 
+	 * memory of a single Correlator), a common pattern for addressing the need 
+	 * for a table snapshot to initialize state before subscribing is to 
+	 * maintain a per-key dictionary of last-seen values, updated by both the 
+	 * initial iteration and the RowChanged notification events; any RowChanged 
+	 * event whose old value does not match the last-seen dictionary must be 
+	 * ignored, to avoid double-counting changes. To save memory, entries from 
+	 * the last-seen dictionary can be removed after the first RowChanged event 
+	 * for that key. 
+	 *
+	 * For distributed stores and drivers that support it, the application
+	 * may also receive MissedRowChanges events to signify that some unknown number
+	 * of updates have been missed (typically due to a network disconnection
+	 * between the client and the store)
+	 *
+	 * @return A unique subscriptionId that can be passed to any instance of 
+	 * this Table to unsubscribe.
+	 * @see RowChanged The event sent whenever a row is modified.
+	 * @see MissedRowChanges The event sent whenever a row is modified.
+	 * @see Table#unsubscribe() Unsubscribe using this action. 
+	 */
+	action subscribeRowChanged() returns integer 
+	{
+		integer subscriptionId := integer.getUnique(); 
+		plugin.TableChunk_subscribeRowChanged(c, subscriptionId);
+		return subscriptionId;
+	}
+	
+	/**
+	 * Cancel a previous subscription.
+	 *
+	 * This is only supported for tables in a distributed store.
+	 *
+	 * If other monitors in this context have also subscribed,
+	 * events will still be delivered until they have all unsubscribed.
+	 * subscriptionId must be a value returned from a subscribeRowChanged() on 
+	 * this table.
+	 *
+	 * @param subscriptionId Identifier for the subscription to remove, 
+	 * returned by subscribeRowChanged().
+	 */
+	action unsubscribe(integer subscriptionId) 
+	{ 
+		plugin.TableChunk_unsubscribe(c, subscriptionId);
+	}
+
+	/**
+	 * Return the index of a field.
+	 *
+	 * Returns what position in the Schema the specified field
+	 * appears at. If a name that is not in Schema fieldName
+	 * is passed in, the monitor instance will be terminated with an error.
+	 *
+	 * Using this action is more efficient that getting the same information 
+	 * by using indexOf on the Schema.fields sequence. 
+	 *
+	 * @param fieldName A field name that exists in this table's Schema. 
+	 */
+	action getFieldIndex(string fieldName) returns integer 
+	{ 
+		return plugin.TableChunk_getFieldIndex(c, fieldName);
+	}
+}
+
+/** Represents a store, which is a container for a uniquely named collection of 
+	tables. 
+	
+	@see Storage Provides actions to prepare and open a Store. 
+	@see Table Represents the tables in a Store. 
+*/
+event Store {
+	/** @private*/ import "MemoryStorePlugin" as plugin;
+	/** @private*/ wildcard chunk c;
+	
+
+	/** Prepare a table so that subsequent open calls for it will succeed.
+	
+		If the table already exists, the Schema provided to the prepare
+		function must completely match the existing schema. If it does 
+		not already exist, the Schema will be used to create the table.
+	
+		The function returns an id; once preparation is complete a
+		Finished event with that id will be sent.
+		
+		This call is idempotent - if the table was already successfully 
+		prepared, it will return success immediately.
+		
+		@param name A unique name that will be used to identify the new table. 
+		@param schema The schema identifying the fields of the new table. 
+		@return The unique identifier for this operation, which will be 
+			included in the Finished event sent after the operation is 
+			complete. 
+		@see Finished A Finished event will be sent when this asynchronous 
+			operation has completed. 
+	*/
+	action prepare(string name, Schema schema) returns integer {
+		return plugin.StoreChunk_prepare3(c, name, schema.fields.toString() + " " + schema.types.toString(), schema.fields, schema.types, schema.exposeMemoryView, schema.exposePersistentView, schema.memoryViewDisplayName, schema.memoryViewDescription, schema.persistentViewDisplayName, schema.persistentViewDescription, currentTime);
+	}
+
+	/** Indicate whether or not a Table with the specified name is
+		present in the Store.
+	
+		@param name The unique table name to check for. 
+		@return True if it is safe to call open() on the specified table; false 
+			if preparation failed or is still in progress. 
+	*/
+	action hasTable(string name) returns boolean {
+		return plugin.StoreChunk_hasTable(c, name);
+	}
+
+	/** Open the specified table, once it has been prepared.
+	
+		It is an error to call this before a prepare call for the table
+		has finished without error.
+		
+		@param name The name of the table to be opened, which must be the same 
+			as the name used when the table was first prepared. 
+		@see #prepare() This action must not be called until prepare has 
+			completed successfully. 
+	*/
+	action open(string name) returns Table {
+		return Table(plugin.StoreChunk_open(c,name));
+	}
+
+	/** Persist committed changes back to stable storage, asynchronously.
+	
+		Only on-disk persistent stores can be persisted using this action. 
+		It is not possible to call this method on Correlator-persistent tables 
+		since all changes committed to such tables will be 
+		written to disk automatically in the same transaction as changes to 
+		the state of persistent EPL monitors. 
+		
+		@return The unique identifier for this operation, which will be 
+			included in the Finished event sent after the operation is 
+			complete. 
+		@see Finished A Finished event will be sent when this asynchronous 
+			operation has completed. 
+	*/
+	action persist() returns integer {
+		return plugin.StoreChunk_persist(c,currentTime);
+	}
+
+	/** Create a backup of the Store.
+	
+		The backup is created in the specified file, which is
+		overwritten if it already exists.
+	
+		Only persistent (on-disk) stores can be backed up. 
+		
+		@return The unique identifier for this operation, which will be 
+			included in the Finished event sent after the operation is 
+			complete. 
+		@see Finished A Finished event will be sent when this asynchronous 
+			operation has completed. 
+	*/
+	action backup(string filename) returns integer {
+		return plugin.StoreChunk_backup(c, filename);
+	}
+
+	/** Get the name of this Store. */
+	action getStoreName() returns string {
+		return plugin.StoreChunk_getStoreName(c);
+	}
+}
+
+/** MemoryStore factory interface for creating Store event objects. 
+
+	There are several different types of Store supported by MemoryStore:
+	<ul>
+	<li>In-memory only (no persistence)</li>
+	<li>Persistent (using a specified database file on disk; 
+		committed changes go to disk when the persist() action is called)</li>
+	<li>Correlator-persistent (using the Correlator's integrated data store; 
+		committed changes go to disk periodically when the Correlator takes a 
+		snapshot of persistent monitor state and persists the results). </li>
+	<li>Distributed (Using a distributed cache technology to share and access
+		data across multiple distributed nodes). </li>
+	</ul>
+	Correlator-persistent stores are only available if Correlator persistence 
+	has been enabled. Non-persistent monitors may use any type of store, but 
+	a monitor marked as 'persistent' may ONLY access Correlator-persistent 
+	stores.
+
+	To use the MemoryStore, create a monitor field (or variable) to hold the 
+	Storage factory event, and use one of the prepare* actions to 
+	asynchronously get a Store of the desired type ready for use, and give it 
+	a unique name. Once the store has been prepared, use the open(name) action 
+	to get a Store event that can be used to interact with the store. 
+	
+	e.g.<pre>
+	<br/>using com.apama.memorystore.Storage; 
+	<br/>using com.apama.memorystore.Store; 
+	<br/>using com.apama.memorystore.Finished; 
+	<br/>
+	<br/>monitor Test { 
+	<br/>	Storage storage; 
+	<br/>	Store store; 
+	<br/>
+	<br/>	action onload() { 
+	<br/>		integer id := storage.prepareOrCreate("storename", "/tmp/example.dat"); 
+	<br/>		Finished f; 
+	<br/>		on Finished(id=id):f
+	<br/>		{
+	<br/>			if not f.success { log "Store creation failed: "+f.status at ERROR; die; } 
+	<br/>			store := storage.open("storename");
+	<br/>			...
+	<br/>		}
+	<br/>	} 
+	<br/>}
+	</pre>
+
+	@see Store The purpose of the Storage event is to prepare and open stores. 
+	@see #prepareOrCreate() The most commonly used action for preparing a 
+		persistent Store. 
+	@see #open() Once a store has been prepared it can be opened. 
+*/
+event Storage {
+	/** @private*/ import "MemoryStorePlugin" as plugin;
+
+	/** Prepare an in-memory read-write Store 
+		to be opened and used by the application.
+	
+		@param name A unique name identifying this Store. 
+		@return The unique identifier for this operation, which will be 
+			included in the Finished event sent after the operation is 
+			complete and it becomes safe to call open() on this store. 
+		@see Finished A Finished event will be sent when this asynchronous 
+			operation has completed. 
+	*/
+	static action prepareInMemory(string name) returns integer {
+		return plugin.prepareInMemory(name);
+	}
+
+	/** Prepare a distributed store (e.g. distributed cache) 
+		to be opened and used by the application.
+	
+		@param name A unique name identifying this Store, 
+			which also specifies the id of its configuration bean in the XML 
+			configuration file. This name should not contain spaces.
+		@return The unique identifier for this operation, which will be 
+			included in the Finished event sent after the operation is 
+			complete and it becomes safe to call open() on this store. 
+		@see Finished A Finished event will be sent when this asynchronous 
+			operation has completed. 
+
+	*/
+	static action prepareDistributed(string name) returns integer {
+		return plugin.prepareDistributed(name);
+	}
+
+	/** Indicates whether configuration for the given distributed
+	 	store name exists. 
+
+		Returning false indicates that a prepareDistributed of
+		the store name will definitely fail.  True indicates
+		it may succeed, but is not a guarantee of success.
+		Does not actually connect to the distributed store.
+
+		@return false if prepareDistributed for the given
+			store name will definitely fail
+	*/
+	static action hasDistributedStore(string name) returns boolean {
+		return plugin.hasDistributedStore(name);
+	}
+
+
+	/** Prepare a Correlator-persistent read-write Store 
+		to be opened and used by the application.
+		
+		All committed changes made to a Correlator-persistent store are 
+		persisted to disk automatically whenever the Correlator takes a 
+		snapshot of the Correlator persistent application state. 
+		Because the Correlator determines when to persist its state, you 
+		cannot explicitly request persistence for a Correlator-persistent 
+		store or any tables it contains.
+
+		Attempts to create a Correlator-persistent store in a Correlator that 
+		does not have persistence enabled will result in an error that will 
+		terminate the monitor instance. 
+	
+		@param name A unique name identifying this Store. 
+		@return The unique identifier for this operation, which will be 
+			included in the Finished event sent after the operation is 
+			complete and it becomes safe to call open() on this store. 
+		@see Finished A Finished event will be sent when this asynchronous 
+			operation has completed. 
+	*/
+	static action prepareCorrelatorPersistent(string name) returns integer {
+		return plugin.prepareCorrelatorPersistent(name);
+	}
+
+	/** Prepare a persistent read-write Store associated with an existing 
+		database file on disk. 
+	
+		The specified file must exist and must have been created by the 
+		MemoryStore. If the specified file does not exist, or cannot be opened 
+		for read-write, the Finished event will indicate failure. 
+		
+		@param name A unique name identifying this Store. 
+		@param filename The path of the database file holding the persistent 
+			store. If a relative path is specified, it is relative to the 
+			directory that contains the associated Apama Studio project
+			(i.e. the Correlator working directory). 
+		@return The unique identifier for this operation, which will be 
+			included in the Finished event sent after the operation is 
+			complete and it becomes safe to call open() on this store. 
+		@see Finished A Finished event will be sent when this asynchronous 
+			operation has completed. 
+	*/			
+	static action prepare(string name, string filename) returns integer {
+		return plugin.prepare(name, filename);
+	}
+
+	/** Prepare a persistent read-write Store associated with a 
+		database file on disk, which will be created if it does not exist 
+		already. 
+	
+		@param name A unique name identifying this Store. 
+		@param filename The path of the database file holding the persistent 
+			store. If a relative path is specified, it is relative to the 
+			directory that contains the associated Apama Studio project
+			(i.e. the Correlator working directory). 
+			The parent directory of the specified file must already exist. 
+		@return The unique identifier for this operation, which will be 
+			included in the Finished event sent after the operation is 
+			complete and it becomes safe to call open() on this store. 
+		@see Finished A Finished event will be sent when this asynchronous 
+			operation has completed. 
+	*/			
+	static action prepareOrCreate(string name, string filename) returns integer {
+		return plugin.prepareOrCreate(name, filename);
+	}
+
+	/** Prepare a persistent read-only Store associated with an existing 
+		database file on disk. 
+	
+		@param name A unique name identifying this Store. 
+		@param filename The path of the database file holding the persistent 
+			store. If a relative path is specified, it is relative to the 
+			directory that contains the associated Apama Studio project
+			(i.e. the Correlator working directory). 
+		@return The unique identifier for this operation, which will be 
+			included in the Finished event sent after the operation is 
+			complete and it becomes safe to call open() on this store. 
+		@see Finished A Finished event will be sent when this asynchronous 
+			operation has completed. 
+	*/			
+	static action prepareReadOnly(string name, string filename) returns integer {
+		return plugin.prepareReadOnly(name, filename);
+	}
+
+	/** Indicate whether or not a Store with the specified name has been 
+		prepared already. 
+	
+		@param name A unique name identifying this Store. 
+		@return True if it is safe to call open() on the specified store; 
+			false if preparation failed or is still in progress.
+	*/
+	static action hasStore(string name) returns boolean {
+		return plugin.hasStore(name);
+	}
+
+	/** Open a named Store that has already been prepared, ready for use by 
+		this monitor instance.
+	
+		Every monitor instance should prepare and open the stores it needs. 
+		Multiple monitor instances can have the same table open at the same 
+		time.
+
+		It is an error to call open() before a prepare call for the table
+		has finished without error.
+		
+		Note that opening a store will not immediately bring all that store's 
+		tables into memory, this only happens when each individual table is 
+		itself prepared and opened. 
+		
+		A persistent monitor can access only Correlator-persistent stores. 
+		If a persistent monitor tries to open any other type of store 
+		(e.g. in-memory, on-disk or distributed) the monitor instance 
+		will terminate with an error.
+		
+		@param name A unique name identifying this Store. 
+	*/
+	static action open(string name) returns Store {
+		return Store(plugin.open(name));
+	}
+}
